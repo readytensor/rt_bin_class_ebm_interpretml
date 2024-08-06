@@ -8,6 +8,7 @@ import pandas as pd
 from interpret.glassbox import ExplainableBoostingClassifier as EBC
 from sklearn.exceptions import NotFittedError
 import matplotlib.pyplot as plt
+from sklearn.metrics import f1_score
 
 warnings.filterwarnings("ignore")
 
@@ -33,6 +34,7 @@ class Classifier:
         self,
         min_samples_leaf: Optional[int] = 2,
         learning_rate: Optional[float] = 1e-2,
+        prob_threshold: Optional[float] = 0.5,
         **kwargs,
     ):
         """Construct a new Explainable Boosting Machine (EBM) binary classifier.
@@ -49,6 +51,7 @@ class Classifier:
         self.learning_rate = float(learning_rate)
         # build model later in `fit` because we need feature names to instantiate
         self.feature_names = None
+        self.prob_threshold = prob_threshold
         self.model = None
         self._is_trained = False
 
@@ -98,7 +101,7 @@ class Classifier:
 
     def explain_local(self, X, class_names):
         local_explanations = self.model.explain_local(X=X, y=None)
-        explanations=[]
+        explanations = []
         for i in range(len(X)):
             sample_exp = local_explanations.data(i)
             sample_expl_dict = {
@@ -106,7 +109,7 @@ class Classifier:
                 "feature_scores": {
                     f: np.round(s, 5)
                     for f, s in zip(sample_exp["names"], sample_exp["scores"])
-                }
+                },
             }
             explanations.append(sample_expl_dict)
         return {
@@ -114,7 +117,9 @@ class Classifier:
             "explanations": explanations,
         }
 
-    def explain_global(self,):
+    def explain_global(
+        self,
+    ):
         return self.model.explain_global(name=self.model_name)
 
     def _save_global_explanations(self, model_dir_path):
@@ -147,16 +152,20 @@ class Classifier:
         plt.savefig(os.path.join(model_dir_path, GLOBAL_EXPLANATIONS_CHART_FILE_NAME))
 
     def evaluate(self, test_inputs: pd.DataFrame, test_targets: pd.Series) -> float:
-        """Evaluate the binary classifier and return the accuracy.
+        """Evaluate the classifier and return the accuracy.
 
         Args:
             test_inputs (pandas.DataFrame): The features of the test data.
             test_targets (pandas.Series): The labels of the test data.
         Returns:
-            float: The accuracy of the binary classifier.
+            float: The accuracy of the classifier.
         """
         if self.model is not None:
-            return self.model.score(test_inputs, test_targets)
+            prob = self.predict_proba(test_inputs)
+            labels = prob[:, 1] > self.prob_threshold
+
+            return f1_score(test_targets, labels)
+
         raise NotFittedError("Model is not fitted yet.")
 
     def save(self, model_dir_path: str) -> None:
