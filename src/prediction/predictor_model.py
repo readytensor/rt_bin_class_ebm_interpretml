@@ -8,6 +8,7 @@ import pandas as pd
 from interpret.glassbox import ExplainableBoostingClassifier as EBC
 from sklearn.exceptions import NotFittedError
 import matplotlib.pyplot as plt
+from sklearn.metrics import f1_score
 
 warnings.filterwarnings("ignore")
 
@@ -33,6 +34,8 @@ class Classifier:
         self,
         min_samples_leaf: Optional[int] = 2,
         learning_rate: Optional[float] = 1e-2,
+        decision_threshold: Optional[float] = 0.5,
+        positive_class_weight: Optional[float] = 1.0,
         **kwargs,
     ):
         """Construct a new Explainable Boosting Machine (EBM) binary classifier.
@@ -47,6 +50,8 @@ class Classifier:
         """
         self.min_samples_leaf = int(min_samples_leaf)
         self.learning_rate = float(learning_rate)
+        self.decision_threshold = float(decision_threshold)
+        self.positive_class_weight = float(positive_class_weight)
         # build model later in `fit` because we need feature names to instantiate
         self.feature_names = None
         self.model = None
@@ -73,7 +78,8 @@ class Classifier:
         """
         self.feature_names = train_inputs.columns.tolist()
         self.model = self.build_model()
-        self.model.fit(train_inputs, train_targets)
+        sample_weight = train_targets.map({0: 1, 1: self.positive_class_weight})
+        self.model.fit(train_inputs, train_targets, sample_weight=sample_weight)
         self._is_trained = True
 
     def predict(self, inputs: pd.DataFrame) -> np.ndarray:
@@ -98,7 +104,7 @@ class Classifier:
 
     def explain_local(self, X, class_names):
         local_explanations = self.model.explain_local(X=X, y=None)
-        explanations=[]
+        explanations = []
         for i in range(len(X)):
             sample_exp = local_explanations.data(i)
             sample_expl_dict = {
@@ -106,7 +112,7 @@ class Classifier:
                 "feature_scores": {
                     f: np.round(s, 5)
                     for f, s in zip(sample_exp["names"], sample_exp["scores"])
-                }
+                },
             }
             explanations.append(sample_expl_dict)
         return {
@@ -114,7 +120,9 @@ class Classifier:
             "explanations": explanations,
         }
 
-    def explain_global(self,):
+    def explain_global(
+        self,
+    ):
         return self.model.explain_global(name=self.model_name)
 
     def _save_global_explanations(self, model_dir_path):
@@ -146,17 +154,32 @@ class Classifier:
         plt.grid(linestyle="--", alpha=0.5)
         plt.savefig(os.path.join(model_dir_path, GLOBAL_EXPLANATIONS_CHART_FILE_NAME))
 
-    def evaluate(self, test_inputs: pd.DataFrame, test_targets: pd.Series) -> float:
-        """Evaluate the binary classifier and return the accuracy.
+    def evaluate(
+        self,
+        test_inputs: pd.DataFrame,
+        test_targets: pd.Series,
+        decision_threshold: float = -1,
+    ) -> float:
+        """Evaluate the classifier and return the accuracy.
 
         Args:
             test_inputs (pandas.DataFrame): The features of the test data.
             test_targets (pandas.Series): The labels of the test data.
+            decision_threshold (Optional float): Decision threshold for the
+                positive class.
+                Value -1 indicates use the default set when model was
+                instantiated.
         Returns:
-            float: The accuracy of the binary classifier.
+            float: The accuracy of the classifier.
         """
+        if decision_threshold == -1:
+            decision_threshold = self.decision_threshold
         if self.model is not None:
-            return self.model.score(test_inputs, test_targets)
+            prob = self.predict_proba(test_inputs)
+            labels = prob[:, 1] > decision_threshold
+            score = f1_score(test_targets, labels)
+            return score
+
         raise NotFittedError("Model is not fitted yet.")
 
     def save(self, model_dir_path: str) -> None:
@@ -275,7 +298,10 @@ def load_predictor_model(predictor_dir_path: str) -> Classifier:
 
 
 def evaluate_predictor_model(
-    model: Classifier, x_test: pd.DataFrame, y_test: pd.Series
+    model: Classifier,
+    x_test: pd.DataFrame,
+    y_test: pd.Series,
+    decision_threshold: float = -1,
 ) -> float:
     """
     Evaluate the classifier model and return the accuracy.
@@ -284,8 +310,23 @@ def evaluate_predictor_model(
         model (Classifier): The classifier model.
         x_test (pd.DataFrame): The features of the test data.
         y_test (pd.Series): The labels of the test data.
+        decision_threshold (Union(optional, float)): Decision threshold
+                for predicted label.
+                Value -1 indicates use the default set when model was
+                instantiated.
 
     Returns:
         float: The accuracy of the classifier model.
     """
-    return model.evaluate(x_test, y_test)
+    return model.evaluate(x_test, y_test, decision_threshold)
+
+
+def set_decision_threshold(model: Classifier, decision_threshold: float) -> None:
+    """
+    Set the decision threshold for the classifier model.
+
+    Args:
+        model (Classifier): The classifier model.
+        decision_threshold (float): The decision threshold.
+    """
+    model.decision_threshold = decision_threshold

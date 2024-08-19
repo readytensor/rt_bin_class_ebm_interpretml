@@ -1,4 +1,6 @@
 {
   "min_samples_split": 2,
-  "learning_rate": 1e-2
+  "learning_rate": 1e-2,
+  "decision_threshold": 0.5,
+  "positive_class_weight": 1.0
 }
