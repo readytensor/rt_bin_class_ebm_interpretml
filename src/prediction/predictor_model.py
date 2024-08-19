@@ -176,7 +176,7 @@ class Classifier:
             decision_threshold = self.decision_threshold
         if self.model is not None:
             prob = self.predict_proba(test_inputs)
-            labels = prob[:, 1] > decision_threshold
+            labels = prob[:, 1] >= decision_threshold
             score = f1_score(test_targets, labels)
             return score
 
